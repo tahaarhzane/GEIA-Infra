@@ -1,84 +1,30 @@
-# Configure the Azure provider
-terraform {
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
-    }
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = "~> 2.0"
-    }
-  }
-}
+# main.tf
 
+# Configure the Azure provider
 provider "azurerm" {
   features {}
 }
 
-provider "azuread" {}
-
-# Variables
-variable "location" {
-  default = "East US"
-}
-
-variable "project_name" {
-  default = "geia"
-}
-
-variable "environment" {
-  default = "dev"
-}
-
-# Resource Group
+# Create a resource group
 resource "azurerm_resource_group" "geia_rg" {
-  name     = "${var.project_name}-${var.environment}-rg"
+  name     = "${var.prefix}-rg"
   location = var.location
 }
 
-# Storage Account
-resource "azurerm_storage_account" "geia_storage" {
-  name                     = "${var.project_name}${var.environment}sa"
+# Create Azure Functions App (Consumption plan)
+resource "azurerm_storage_account" "geia_func_storage" {
+  name                     = "${lower(var.prefix)}func${random_string.random.result}"
   resource_group_name      = azurerm_resource_group.geia_rg.name
   location                 = azurerm_resource_group.geia_rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
-  min_tls_version          = "TLS1_2"
-
-  blob_properties {
-    versioning_enabled = true
-  }
 }
 
-# Blob Containers
-resource "azurerm_storage_container" "raw_data" {
-  name                  = "raw-data"
-  storage_account_name  = azurerm_storage_account.geia_storage.name
-  container_access_type = "private"
-}
-
-resource "azurerm_storage_container" "processed_data" {
-  name                  = "processed-data"
-  storage_account_name  = azurerm_storage_account.geia_storage.name
-  container_access_type = "private"
-}
-
-# Application Insights
-resource "azurerm_application_insights" "geia_appinsights" {
-  name                = "${var.project_name}-${var.environment}-appinsights"
-  location            = azurerm_resource_group.geia_rg.location
-  resource_group_name = azurerm_resource_group.geia_rg.name
-  application_type    = "web"
-}
-
-# Function App (Consumption Plan)
-resource "azurerm_app_service_plan" "geia_app_plan" {
-  name                = "${var.project_name}-${var.environment}-app-plan"
+resource "azurerm_app_service_plan" "geia_func_plan" {
+  name                = "${var.prefix}-func-plan"
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
   kind                = "FunctionApp"
-  reserved            = true
 
   sku {
     tier = "Dynamic"
@@ -86,203 +32,159 @@ resource "azurerm_app_service_plan" "geia_app_plan" {
   }
 }
 
-resource "azurerm_function_app" "geia_function" {
-  name                       = "${var.project_name}-${var.environment}-function"
+resource "azurerm_function_app" "geia_functions" {
+  name                       = "${var.prefix}-functions-${random_string.random.result}"
   location                   = azurerm_resource_group.geia_rg.location
   resource_group_name        = azurerm_resource_group.geia_rg.name
-  app_service_plan_id        = azurerm_app_service_plan.geia_app_plan.id
-  storage_account_name       = azurerm_storage_account.geia_storage.name
-  storage_account_access_key = azurerm_storage_account.geia_storage.primary_access_key
-  os_type                    = "linux"
-  version                    = "~4"
-
-  site_config {
-    dotnet_framework_version = "v6.0"
-    use_32_bit_worker_process = false
-  }
-
-  app_settings = {
-    FUNCTIONS_WORKER_RUNTIME       = "dotnet"
-    APPINSIGHTS_INSTRUMENTATIONKEY = azurerm_application_insights.geia_appinsights.instrumentation_key
-  }
-
-  identity {
-    type = "SystemAssigned"
-  }
+  app_service_plan_id        = azurerm_app_service_plan.geia_func_plan.id
+  storage_account_name       = azurerm_storage_account.geia_func_storage.name
+  storage_account_access_key = azurerm_storage_account.geia_func_storage.primary_access_key
 }
 
-# SQL Server
-resource "azurerm_mssql_server" "geia_sqlserver" {
-  name                         = "${var.project_name}-${var.environment}-sqlserver"
+# Create Azure Blob Storage
+resource "azurerm_storage_account" "geia_blob_storage" {
+  name                     = "${lower(var.prefix)}blob${random_string.random.result}"
+  resource_group_name      = azurerm_resource_group.geia_rg.name
+  location                 = azurerm_resource_group.geia_rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_container" "raw_data" {
+  name                  = "raw-data"
+  storage_account_name  = azurerm_storage_account.geia_blob_storage.name
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_container" "processed_data" {
+  name                  = "processed-data"
+  storage_account_name  = azurerm_storage_account.geia_blob_storage.name
+  container_access_type = "private"
+}
+
+# Create Azure SQL Database
+resource "azurerm_sql_server" "geia_sql_server" {
+  name                         = "${var.prefix}-sql-server-${random_string.random.result}"
   resource_group_name          = azurerm_resource_group.geia_rg.name
   location                     = azurerm_resource_group.geia_rg.location
   version                      = "12.0"
-  administrator_login          = "sqladmin"
-  administrator_login_password = "ChangeMe123!" # Change this in a real scenario
-  minimum_tls_version          = "1.2"
-
-  azuread_administrator {
-    login_username = "SQL Admin"
-    object_id      = azuread_group.sql_admins.object_id
-  }
+  administrator_login          = var.sql_admin_username
+  administrator_login_password = azurerm_key_vault_secret.sql_admin_password.value
 }
 
-# SQL Database
-resource "azurerm_mssql_database" "geia_sqldb" {
-  name           = "${var.project_name}-${var.environment}-sqldb"
-  server_id      = azurerm_mssql_server.geia_sqlserver.id
-  collation      = "SQL_Latin1_General_CP1_CI_AS"
-  license_type   = "LicenseIncluded"
-  max_size_gb    = 2
-  sku_name       = "S0"
-
-  short_term_retention_policy {
-    retention_days = 7
-  }
+resource "azurerm_sql_database" "geia_sql_db" {
+  name                = "${var.prefix}-sql-db"
+  resource_group_name = azurerm_resource_group.geia_rg.name
+  location            = azurerm_resource_group.geia_rg.location
+  server_name         = azurerm_sql_server.geia_sql_server.name
+  edition             = "Standard"
+  requested_service_objective_name = "S0"
 }
 
-# Cosmos DB
-resource "azurerm_cosmosdb_account" "geia_cosmos" {
-  name                = "${var.project_name}-${var.environment}-cosmos"
+# Create Azure Cosmos DB
+resource "azurerm_cosmosdb_account" "geia_cosmos_db" {
+  name                = "${var.prefix}-cosmos-${random_string.random.result}"
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
   offer_type          = "Standard"
   kind                = "GlobalDocumentDB"
 
-  enable_automatic_failover = true
-
   consistency_policy {
-    consistency_level       = "Session"
-    max_interval_in_seconds = 5
-    max_staleness_prefix    = 100
+    consistency_level = "Session"
   }
 
   geo_location {
-    location          = var.location
+    location          = azurerm_resource_group.geia_rg.location
     failover_priority = 0
   }
 }
 
-# App Service Plan (Premium V2 tier for better performance)
-resource "azurerm_app_service_plan" "geia_web_plan" {
-  name                = "${var.project_name}-${var.environment}-web-plan"
+resource "azurerm_cosmosdb_sql_database" "geia_cosmos_sql_db" {
+  name                = "${var.prefix}-cosmos-sql-db"
+  resource_group_name = azurerm_resource_group.geia_rg.name
+  account_name        = azurerm_cosmosdb_account.geia_cosmos_db.name
+}
+
+resource "azurerm_cosmosdb_sql_container" "raw_json_data" {
+  name                = "raw-json-data"
+  resource_group_name = azurerm_resource_group.geia_rg.name
+  account_name        = azurerm_cosmosdb_account.geia_cosmos_db.name
+  database_name       = azurerm_cosmosdb_sql_database.geia_cosmos_sql_db.name
+  partition_key_path  = "/id"
+}
+
+# Create Azure App Service (Free F1 tier)
+resource "azurerm_app_service_plan" "geia_app_plan" {
+  name                = "${var.prefix}-app-plan"
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
   kind                = "Linux"
   reserved            = true
 
   sku {
-    tier = "PremiumV2"
-    size = "P1v2"
+    tier = "Free"
+    size = "F1"
   }
 }
 
-# App Service
-resource "azurerm_app_service" "geia_webapp" {
-  name                = "${var.project_name}-${var.environment}-webapp"
+resource "azurerm_app_service" "geia_web_app" {
+  name                = "${var.prefix}-web-app-${random_string.random.result}"
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
-  app_service_plan_id = azurerm_app_service_plan.geia_web_plan.id
+  app_service_plan_id = azurerm_app_service_plan.geia_app_plan.id
 
   site_config {
-    linux_fx_version = "DOTNETCORE|6.0"
-    always_on        = true
-    http2_enabled    = true
-  }
-
-  app_settings = {
-    "APPINSIGHTS_INSTRUMENTATIONKEY" = azurerm_application_insights.geia_appinsights.instrumentation_key
-  }
-
-  identity {
-    type = "SystemAssigned"
+    linux_fx_version = "PYTHON|3.8"
   }
 }
 
-# Key Vault
-resource "azurerm_key_vault" "geia_keyvault" {
-  name                       = "${var.project_name}-${var.environment}-kv"
-  location                   = azurerm_resource_group.geia_rg.location
-  resource_group_name        = azurerm_resource_group.geia_rg.name
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
-  soft_delete_retention_days = 7
-  purge_protection_enabled   = true
-}
-
-# Grant Key Vault access to Function App
-resource "azurerm_key_vault_access_policy" "function_app_policy" {
-  key_vault_id = azurerm_key_vault.geia_keyvault.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = azurerm_function_app.geia_function.identity[0].principal_id
-
-  secret_permissions = [
-    "Get", "List"
-  ]
-}
-
-# Virtual Network
-resource "azurerm_virtual_network" "geia_vnet" {
-  name                = "${var.project_name}-${var.environment}-vnet"
-  address_space       = ["10.0.0.0/16"]
+# Configure Azure Monitor (Basic, included free)
+resource "azurerm_application_insights" "geia_app_insights" {
+  name                = "${var.prefix}-app-insights"
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
+  application_type    = "web"
 }
 
-# Subnets
-resource "azurerm_subnet" "function_subnet" {
-  name                 = "function-subnet"
-  resource_group_name  = azurerm_resource_group.geia_rg.name
-  virtual_network_name = azurerm_virtual_network.geia_vnet.name
-  address_prefixes     = ["10.0.1.0/24"]
+# Add Azure Key Vault
+resource "azurerm_key_vault" "geia_key_vault" {
+  name                        = "${var.prefix}-kv-${random_string.random.result}"
+  location                    = azurerm_resource_group.geia_rg.location
+  resource_group_name         = azurerm_resource_group.geia_rg.name
+  enabled_for_disk_encryption = true
+  tenant_id                   = data.azurerm_client_config.current.tenant_id
+  soft_delete_retention_days  = 7
+  purge_protection_enabled    = false
 
-  delegation {
-    name = "function-delegation"
-    service_delegation {
-      name    = "Microsoft.Web/serverFarms"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
-    }
+  sku_name = "standard"
+
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+
+    key_permissions = [
+      "Get", "List", "Create", "Delete", "Update",
+    ]
+
+    secret_permissions = [
+      "Get", "List", "Set", "Delete",
+    ]
   }
 }
 
-resource "azurerm_subnet" "webapp_subnet" {
-  name                 = "webapp-subnet"
-  resource_group_name  = azurerm_resource_group.geia_rg.name
-  virtual_network_name = azurerm_virtual_network.geia_vnet.name
-  address_prefixes     = ["10.0.2.0/24"]
-
-  delegation {
-    name = "webapp-delegation"
-    service_delegation {
-      name    = "Microsoft.Web/serverFarms"
-      actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
-    }
-  }
+# Create a secret for SQL Server admin password
+resource "azurerm_key_vault_secret" "sql_admin_password" {
+  name         = "sql-admin-password"
+  value        = var.sql_admin_password
+  key_vault_id = azurerm_key_vault.geia_key_vault.id
 }
 
-# Azure AD Group for SQL Admins
-resource "azuread_group" "sql_admins" {
-  display_name     = "GEIA SQL Admins"
-  security_enabled = true
-}
+# Get current Azure client configuration
+data "azurerm_client_config" "current" {}
 
-# Outputs
-output "function_app_name" {
-  value = azurerm_function_app.geia_function.name
-}
-
-output "sql_server_fqdn" {
-  value = azurerm_mssql_server.geia_sqlserver.fully_qualified_domain_name
-}
-
-output "webapp_url" {
-  value = "https://${azurerm_app_service.geia_webapp.default_site_hostname}"
-}
-
-output "cosmos_db_endpoint" {
-  value = azurerm_cosmosdb_account.geia_cosmos.endpoint
-}
-
-output "key_vault_uri" {
-  value = azurerm_key_vault.geia_keyvault.vault_uri
+# Generate a random string for unique naming
+resource "random_string" "random" {
+  length  = 8
+  special = false
+  upper   = false
 }
