@@ -17,3 +17,8 @@ variable "sql_admin_password" {
   description = "The administrator password of the SQL Server."
   sensitive   = true
 }
+
+variable "alert_email" {
+  description = "Email address for budget alerts"
+  type        = string
+}

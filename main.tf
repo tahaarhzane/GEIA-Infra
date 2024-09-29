@@ -18,6 +18,7 @@ resource "azurerm_storage_account" "geia_func_storage" {
   location                 = azurerm_resource_group.geia_rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  access_tier              = "Cool"
 }
 
 resource "azurerm_app_service_plan" "geia_func_plan" {
@@ -48,6 +49,7 @@ resource "azurerm_storage_account" "geia_blob_storage" {
   location                 = azurerm_resource_group.geia_rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  access_tier              = "Cool"
 }
 
 resource "azurerm_storage_container" "raw_data" {
@@ -77,40 +79,8 @@ resource "azurerm_sql_database" "geia_sql_db" {
   resource_group_name = azurerm_resource_group.geia_rg.name
   location            = azurerm_resource_group.geia_rg.location
   server_name         = azurerm_sql_server.geia_sql_server.name
-  edition             = "Standard"
-  requested_service_objective_name = "S0"
-}
-
-# Create Azure Cosmos DB
-resource "azurerm_cosmosdb_account" "geia_cosmos_db" {
-  name                = "${var.prefix}-cosmos-${random_string.random.result}"
-  location            = azurerm_resource_group.geia_rg.location
-  resource_group_name = azurerm_resource_group.geia_rg.name
-  offer_type          = "Standard"
-  kind                = "GlobalDocumentDB"
-
-  consistency_policy {
-    consistency_level = "Session"
-  }
-
-  geo_location {
-    location          = azurerm_resource_group.geia_rg.location
-    failover_priority = 0
-  }
-}
-
-resource "azurerm_cosmosdb_sql_database" "geia_cosmos_sql_db" {
-  name                = "${var.prefix}-cosmos-sql-db"
-  resource_group_name = azurerm_resource_group.geia_rg.name
-  account_name        = azurerm_cosmosdb_account.geia_cosmos_db.name
-}
-
-resource "azurerm_cosmosdb_sql_container" "raw_json_data" {
-  name                = "raw-json-data"
-  resource_group_name = azurerm_resource_group.geia_rg.name
-  account_name        = azurerm_cosmosdb_account.geia_cosmos_db.name
-  database_name       = azurerm_cosmosdb_sql_database.geia_cosmos_sql_db.name
-  partition_key_path  = "/id"
+  edition             = "Basic"
+  requested_service_objective_name = "Basic"
 }
 
 # Create Azure App Service (Free F1 tier)
@@ -187,4 +157,42 @@ resource "random_string" "random" {
   length  = 8
   special = false
   upper   = false
+}
+
+# Add budget alert
+resource "azurerm_monitor_action_group" "budget_alert" {
+  name                = "budget-alert-action-group"
+  resource_group_name = azurerm_resource_group.geia_rg.name
+  short_name          = "budget-alert"
+
+  email_receiver {
+    name          = "sendtoadmin"
+    email_address = var.alert_email
+  }
+}
+
+resource "azurerm_consumption_budget_resource_group" "budget" {
+  name              = "budget"
+  resource_group_id = azurerm_resource_group.geia_rg.id
+
+  amount     = 1  # Set to $1 to get alerted if you exceed free tier
+  time_grain = "Monthly"
+  time_period {
+    start_date = "2023-06-01T00:00:00Z"  # Adjust this date
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 90.0
+    operator       = "GreaterThanOrEqualTo"
+    threshold_type = "Actual"
+
+    contact_emails = [
+      var.alert_email,
+    ]
+
+    contact_groups = [
+      azurerm_monitor_action_group.budget_alert.id,
+    ]
+  }
 }

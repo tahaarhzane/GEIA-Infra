@@ -14,10 +14,6 @@ output "sql_server_name" {
   value = azurerm_sql_server.geia_sql_server.name
 }
 
-output "cosmos_db_endpoint" {
-  value = azurerm_cosmosdb_account.geia_cosmos_db.endpoint
-}
-
 output "key_vault_name" {
   value = azurerm_key_vault.geia_key_vault.name
 }
