@@ -3,12 +3,17 @@
 # Configure the Azure provider
 provider "azurerm" {
   features {}
+  version = "~> 2.0"
 }
 
 # Create a resource group
 resource "azurerm_resource_group" "geia_rg" {
   name     = "${var.prefix}-rg"
   location = var.location
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 # Create Azure Functions App (Consumption plan)
@@ -18,7 +23,12 @@ resource "azurerm_storage_account" "geia_func_storage" {
   location                 = azurerm_resource_group.geia_rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  account_kind             = "StorageV2"
   access_tier              = "Cool"
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 resource "azurerm_app_service_plan" "geia_func_plan" {
@@ -31,6 +41,10 @@ resource "azurerm_app_service_plan" "geia_func_plan" {
     tier = "Dynamic"
     size = "Y1"
   }
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 resource "azurerm_function_app" "geia_functions" {
@@ -40,6 +54,11 @@ resource "azurerm_function_app" "geia_functions" {
   app_service_plan_id        = azurerm_app_service_plan.geia_func_plan.id
   storage_account_name       = azurerm_storage_account.geia_func_storage.name
   storage_account_access_key = azurerm_storage_account.geia_func_storage.primary_access_key
+  version                    = "~4"
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 # Create Azure Blob Storage
@@ -49,7 +68,12 @@ resource "azurerm_storage_account" "geia_blob_storage" {
   location                 = azurerm_resource_group.geia_rg.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  account_kind             = "StorageV2"
   access_tier              = "Cool"
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 resource "azurerm_storage_container" "raw_data" {
@@ -71,7 +95,11 @@ resource "azurerm_sql_server" "geia_sql_server" {
   location                     = azurerm_resource_group.geia_rg.location
   version                      = "12.0"
   administrator_login          = var.sql_admin_username
-  administrator_login_password = azurerm_key_vault_secret.sql_admin_password.value
+  administrator_login_password = random_password.sql_admin_password.result
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 resource "azurerm_sql_database" "geia_sql_db" {
@@ -80,7 +108,10 @@ resource "azurerm_sql_database" "geia_sql_db" {
   location            = azurerm_resource_group.geia_rg.location
   server_name         = azurerm_sql_server.geia_sql_server.name
   edition             = "Basic"
-  requested_service_objective_name = "Basic"
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 # Create Azure App Service (Free F1 tier)
@@ -95,6 +126,10 @@ resource "azurerm_app_service_plan" "geia_app_plan" {
     tier = "Free"
     size = "F1"
   }
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 resource "azurerm_app_service" "geia_web_app" {
@@ -106,6 +141,10 @@ resource "azurerm_app_service" "geia_web_app" {
   site_config {
     linux_fx_version = "PYTHON|3.8"
   }
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 # Configure Azure Monitor (Basic, included free)
@@ -114,6 +153,18 @@ resource "azurerm_application_insights" "geia_app_insights" {
   location            = azurerm_resource_group.geia_rg.location
   resource_group_name = azurerm_resource_group.geia_rg.name
   application_type    = "web"
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
+}
+
+
+// random password for sql server
+resource "random_password" "sql_admin_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
 # Add Azure Key Vault
@@ -140,12 +191,16 @@ resource "azurerm_key_vault" "geia_key_vault" {
       "Get", "List", "Set", "Delete",
     ]
   }
+  tags = {
+    environment = "development"
+    project     = "GEIA"
+  }
 }
 
 # Create a secret for SQL Server admin password
 resource "azurerm_key_vault_secret" "sql_admin_password" {
   name         = "sql-admin-password"
-  value        = var.sql_admin_password
+  value        = random_password.sql_admin_password.result
   key_vault_id = azurerm_key_vault.geia_key_vault.id
 }
 
